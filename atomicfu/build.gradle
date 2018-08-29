@@ -1,22 +1,118 @@
-apply plugin: 'kotlin-platform-jvm'
+apply plugin: 'kotlin-multiplatform'
 
-dependencies {
-    compile "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    expectedBy project(":atomicfu-common")
+kotlin {
+    targets {
+        fromPreset(presets.jvm, 'jvm')
+        fromPreset(presets.js, 'js')
+        fromPreset(presets.linuxX64, 'linux64')
+        fromPreset(presets.macosX64, 'macos64')
+        fromPreset(presets.mingwX64, 'windows64')
+        fromPreset(presets.iosArm32, 'iosArm32')
+        fromPreset(presets.iosArm64, 'iosArm64')
+        fromPreset(presets.iosX64, 'iosX64')
+    }
+    sourceSets {
+        commonMain {
+            dependencies {
+                implementation 'org.jetbrains.kotlin:kotlin-stdlib-common'
+            }
+        }
+        commonTest {
+            dependencies {
+                implementation 'org.jetbrains.kotlin:kotlin-test-common'
+                implementation 'org.jetbrains.kotlin:kotlin-test-annotations-common'
+            }
+        }
+        jsMain {
+            dependencies {
+                implementation 'org.jetbrains.kotlin:kotlin-stdlib-js'
+            }
+        }
+        jsTest {
+            dependencies {
+                implementation 'org.jetbrains.kotlin:kotlin-test-js'
+            }
+        }
+        jvmMain {
+            dependencies {
+                implementation 'org.jetbrains.kotlin:kotlin-stdlib'
+            }
+        }
+        jvmTest {
+            dependencies {
+                implementation project(":atomicfu-transformer")
 
-    testCompile project(":atomicfu-transformer")
-    testCompile "junit:junit:$junit_version"
-    testCompile "org.jetbrains.kotlin:kotlin-test-junit:$kotlin_version"
-    testCompile "org.jetbrains.kotlin:kotlin-test:$kotlin_version"
+                implementation 'org.jetbrains.kotlin:kotlin-test'
+                implementation 'org.jetbrains.kotlin:kotlin-test-junit'
+                implementation "junit:junit:$junit_version"
+            }
+        }
+        nativeMain {}
+
+        configure([linux64Main, macos64Main, windows64Main, iosArm32Main, iosArm64Main, iosX64Main]) {
+            dependsOn nativeMain
+        }
+    }
 }
 
-def classesPreAtomicFuDir = file("$buildDir/classes/kotlin/test")
-def classesPostTransformFU = file("$buildDir/classes/kotlin/postTransformedFU")
-def classesPostTransformVH = file("$buildDir/classes/kotlin/postTransformedVH")
-def classesPostTransformBOTH = file("$buildDir/classes/kotlin/postTransformedBOTH")
+tasks.withType(compileKotlinJs.getClass()) {
+    kotlinOptions {
+        moduleKind = "umd"
+        sourceMap = true
+        metaInfo = true
+    }
+}
 
-task configureDirs(dependsOn: compileTestKotlin) {
-    (sourceSets.test.output.classesDirs as ConfigurableFileCollection).setFrom(classesPostTransformFU, classesPostTransformVH, classesPostTransformBOTH)
+compileKotlinJs {
+    kotlinOptions {
+        // NOTE: Module base-name must be equal to the package name declared in package.json
+        def baseName = "kotlinx-atomicfu"
+        outputFile = new File(outputFile.parent, baseName + ".js")
+    }
+}
+
+apply from: file("$rootProject.projectDir/gradle/node-js.gradle")
+apply from: file("$rootProject.projectDir/gradle/test-mocha-js.gradle")
+apply from: file("$rootProject.projectDir/gradle/publish-npm-js.gradle")
+
+// Workaround the problem with Node downloading
+repositories.whenObjectAdded {
+    if (it instanceof IvyArtifactRepository) {
+        metadataSources {
+            artifact()
+        }
+    }
+}
+
+// configure jvm
+
+def classesPreAtomicFuDir = file("$buildDir/classes/kotlin/jvm/test")
+def classesPostTransformFU = file("$buildDir/classes/kotlin/jvm/postTransformedFU")
+def classesPostTransformVH = file("$buildDir/classes/kotlin/jvm/postTransformedVH")
+def classesPostTransformBOTH = file("$buildDir/classes/kotlin/jvm/postTransformedBOTH")
+
+task transformFU(type: JavaExec, dependsOn: compileTestKotlinJvm) {
+    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
+    args = [classesPreAtomicFuDir, classesPostTransformFU, "FU"]
+    classpath = kotlin.targets.jvm.compilations.test.runtimeDependencyFiles
+    inputs.dir(classesPreAtomicFuDir)
+    outputs.dir(classesPostTransformFU)
+}
+
+task transformBOTH(type: JavaExec, dependsOn: compileTestKotlinJvm) {
+    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
+    args = [classesPreAtomicFuDir, classesPostTransformBOTH, "BOTH"]
+    classpath = kotlin.targets.jvm.compilations.test.runtimeDependencyFiles
+    inputs.dir(classesPreAtomicFuDir)
+    outputs.dir(classesPostTransformBOTH)
+}
+
+task transformVH(type: JavaExec, dependsOn: compileTestKotlinJvm) {
+    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
+    args = [classesPreAtomicFuDir, classesPostTransformVH, "VH"]
+    classpath = kotlin.targets.jvm.compilations.test.runtimeDependencyFiles
+    inputs.dir(classesPreAtomicFuDir)
+    outputs.dir(classesPostTransformVH)
 }
 
 task checkJdk16() {
@@ -29,55 +125,35 @@ task checkJdk16() {
     }
 }
 
-task transformFU(type: JavaExec, dependsOn: compileTestKotlin) {
-    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
-    args = [classesPreAtomicFuDir, classesPostTransformFU, "FU"]
-    classpath = sourceSets.test.runtimeClasspath
-    inputs.dir(classesPreAtomicFuDir)
-    outputs.dir(classesPostTransformFU)
-}
-
-task transformBOTH(type: JavaExec, dependsOn: compileTestKotlin) {
-    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
-    args = [classesPreAtomicFuDir, classesPostTransformBOTH, "BOTH"]
-    classpath = sourceSets.test.runtimeClasspath
-    inputs.dir(classesPreAtomicFuDir)
-    outputs.dir(classesPostTransformBOTH)
-}
-
-task transformVH(type: JavaExec, dependsOn: compileTestKotlin) {
-    main = "kotlinx.atomicfu.transformer.AtomicFUTransformerKt"
-    args = [classesPreAtomicFuDir, classesPostTransformVH, "VH"]
-    classpath = sourceSets.test.runtimeClasspath
-    inputs.dir(classesPreAtomicFuDir)
-    outputs.dir(classesPostTransformVH)
-}
-
 task transformedTestFU_6(type: Test, dependsOn: [checkJdk16, transformFU]) {
     executable = "$System.env.JDK_16/bin/java"
-    classpath = files(configurations.testRuntime, classesPostTransformFU)
+    classpath = configurations.jvmTestRuntimeClasspath + project.files(classesPostTransformFU)
+    testClassesDirs = project.files(classesPostTransformFU)
     exclude '**/*LFTest.*'
 }
 
 task transformedTestFU_current(type: Test, dependsOn: transformFU) {
-    classpath = files(configurations.testRuntime, classesPostTransformFU)
+    classpath = files(configurations.jvmTestRuntimeClasspath, classesPostTransformFU)
+    testClassesDirs = project.files(classesPostTransformFU)
     exclude '**/*LFTest.*'
 }
 
-
 task transformedTestBOTH_6(type: Test, dependsOn: [checkJdk16, transformBOTH]) {
     executable = "$System.env.JDK_16/bin/java"
-    classpath = files(configurations.testRuntime, classesPostTransformBOTH)
+    classpath = files(configurations.jvmTestRuntimeClasspath, classesPostTransformBOTH)
+    testClassesDirs = project.files(classesPostTransformBOTH)
     exclude '**/*LFTest.*'
 }
 
 task transformedTestBOTH_current(type: Test, dependsOn: transformBOTH) {
-    classpath = files(configurations.testRuntime, classesPostTransformBOTH)
+    classpath = files(configurations.jvmTestRuntimeClasspath, classesPostTransformBOTH)
+    testClassesDirs = project.files(classesPostTransformBOTH)
     exclude '**/*LFTest.*'
 }
 
 task transformedTestVH(type: Test, dependsOn: transformVH) {
-    classpath = files(configurations.testRuntime, classesPostTransformVH)
+    classpath = files(configurations.jvmTestRuntimeClasspath, classesPostTransformVH)
+    testClassesDirs = project.files(classesPostTransformVH)
     exclude '**/*LFTest.*'
 }
 
@@ -86,8 +162,7 @@ transformedTestVH.onlyIf {
     JavaVersion.current().ordinal() >= JavaVersion.VERSION_1_9.ordinal()
 }
 
-
-task testAll(dependsOn: [
+task jvmTestAll(dependsOn: [
         transformedTestFU_6,
         transformedTestFU_current,
         transformedTestBOTH_6,
@@ -101,5 +176,14 @@ tasks.withType(Test) {
     }
 }
 
-test.dependsOn testAll
+jvmTest.dependsOn jvmTestAll
+
+// TODO
+//if (project.hasProperty("teamcity")) {
+//    afterEvaluate {
+//        runTestDebug {
+//            args '--ktest_logger=TEAMCITY'
+//        }
+//    }
+//}
 
